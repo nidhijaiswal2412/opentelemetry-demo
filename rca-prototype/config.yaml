@@ -1,0 +1,8 @@
+service: opentelemetry-demo
+environment: development
+
+github:
+  organization: nidhijaiswal2412
+  repository: opentelemetry-demo
+
+lookback_minutes: 120
