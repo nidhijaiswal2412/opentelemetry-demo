@@ -1,32 +1,31 @@
 import pytest
-from normalize_data import normalize_all
 
-def test_normalize_minimal():
-    raw = {
-        "repository": {"full_name": "org/repo"},
-        "commits": [{"sha": "abc123", "commit": {"author": {"name": "Alice"}}}],
-        "runs": [
-            {
-                "id": 1,
-                "name": "CI",
-                "head_sha": "abc123",
-                "head_branch": "main",
-                "status": "completed",
-                "conclusion": "success",
-                "created_at": "2026-10-15T00:00:00Z",
-                "updated_at": "2026-10-15T00:05:00Z",
-                "actor": {"login": "alice"},
-                "html_url": "https://github.com/org/repo/actions/runs/1",
-            }
-        ],
-        "jobs_by_run": {"1": [{"id": 11, "name": "build", "status": "completed", "conclusion": "success", "started_at": "2026-10-15T00:00:00Z", "completed_at": "2026-10-15T00:04:00Z", "html_url": "https://..."}]},
-        "deployments": [],
-        "deployment_statuses": {}
+from main import collect_related_services, filter_by_window
+
+
+def test_filter_by_window():
+    window_start = "2026-10-15T03:00:00Z"
+    window_end = "2026-10-15T04:00:00Z"
+    items = [
+        {"created_at": "2026-10-15T02:30:00Z"},
+        {"created_at": "2026-10-15T03:22:04Z"},
+        {"created_at": "2026-10-15T03:55:00Z"},
+        {"created_at": "2026-10-15T06:00:00Z"},
+    ]
+    result = filter_by_window(items, __import__("datetime").datetime.fromisoformat(window_start.replace("Z", "+00:00")), __import__("datetime").datetime.fromisoformat(window_end.replace("Z", "+00:00")))
+    assert len(result) == 2
+    assert result[0]["created_at"] == "2026-10-15T03:22:04Z"
+
+
+def test_dependency_graph_for_checkout():
+    graph = {
+        "checkout": {"upstream": ["frontend", "load-generator"], "downstream": ["payment", "currency", "shipping", "product-catalog", "flagd"]},
+        "frontend": {"upstream": ["frontend-proxy"], "downstream": ["checkout"]},
+        "payment": {"upstream": ["checkout"], "downstream": ["flagd"]},
+        "flagd": {"upstream": ["checkout", "payment"], "downstream": []},
+        "load-generator": {"upstream": [], "downstream": ["checkout"]},
     }
-    out = normalize_all("svc", "dev", "org", "repo", raw)
-    assert out["service"] == "svc"
-    assert out["environment"] == "dev"
-    assert out["repository"] == "org/repo"
-    assert isinstance(out["evidence"], list)
-    assert out["evidence"][0]["buildId"] == 1
-    assert out["evidence"][0]["commitSha"] == "abc123"
+    related = collect_related_services("checkout", graph, depth=2)
+    assert "frontend" in related["upstream"]
+    assert "payment" in related["downstream"]
+    assert "flagd" in related["downstream"]

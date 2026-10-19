@@ -1,0 +1,49 @@
+services:
+  load-generator:
+    upstream: []
+    downstream: [frontend-proxy, checkout]
+  telemetry-docs:
+    upstream: []
+    downstream: []
+  frontend-proxy:
+    upstream: [load-generator]
+    downstream: [flagd-ui, frontend, image-provider]
+  flagd-ui:
+    upstream: [frontend-proxy]
+    downstream: []
+  frontend:
+    upstream: [frontend-proxy]
+    downstream: [ad, checkout, recommendation]
+  image-provider:
+    upstream: [frontend-proxy]
+    downstream: []
+  ad:
+    upstream: [frontend]
+    downstream: [cart, payment]
+  checkout:
+    upstream: [frontend, load-generator]
+    downstream: [payment, currency, shipping, product-catalog, flagd]
+  recommendation:
+    upstream: [frontend]
+    downstream: [shipping, product-catalog]
+  cart:
+    upstream: [ad]
+    downstream: [flagd]
+  payment:
+    upstream: [ad, checkout]
+    downstream: [flagd]
+  currency:
+    upstream: [checkout]
+    downstream: [flagd]
+  shipping:
+    upstream: [checkout, recommendation]
+    downstream: [quote]
+  product-catalog:
+    upstream: [checkout, recommendation]
+    downstream: []
+  flagd:
+    upstream: [cart, payment, currency, checkout]
+    downstream: []
+  quote:
+    upstream: [shipping]
+    downstream: []

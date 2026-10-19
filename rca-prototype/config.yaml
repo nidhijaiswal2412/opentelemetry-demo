@@ -5,4 +5,10 @@ github:
   organization: nidhijaiswal2412
   repository: opentelemetry-demo
 
-lookback_minutes: 120
+lookback_hours: 3
+lookforward_minutes: 20
+incident_source: env
+incident_env_var: INCIDENT_PAYLOAD
+incident_file: rca-prototype/incident.json
+dependency_file: rca-prototype/service_dependencies.yaml
+dependency_depth: 2

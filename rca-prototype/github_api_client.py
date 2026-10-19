@@ -5,10 +5,10 @@ Minimal GitHub REST API client used by the rca-prototype.
 - Implements timeouts, retries, pagination, and simple error handling.
 """
 
-import os
 import logging
-from datetime import datetime
+import os
 from typing import Any, Dict, List, Optional, Tuple
+
 import requests
 from requests.adapters import HTTPAdapter, Retry
 
@@ -43,7 +43,7 @@ class GitHubClient:
             total=3,
             backoff_factor=1,
             status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=frozenset(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
+            allowed_methods=frozenset(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]),
         )
         self.session.mount("https://", HTTPAdapter(max_retries=retries))
 
@@ -72,6 +72,10 @@ class GitHubClient:
         status, data, _ = self._request("GET", "")
         return {"status": status, "data": data}
 
+    def get_commit(self, sha: str) -> Dict[str, Any]:
+        status, data, _ = self._request("GET", f"/commits/{sha}")
+        return data
+
     def list_commits(self, since_iso: Optional[str] = None, per_page: int = 100) -> List[Dict[str, Any]]:
         path = "/commits"
         commits: List[Dict[str, Any]] = []
@@ -80,7 +84,7 @@ class GitHubClient:
             params = {"per_page": per_page, "page": page}
             if since_iso:
                 params["since"] = since_iso
-            status, data, headers = self._request("GET", path, params=params)
+            _, data, _ = self._request("GET", path, params=params)
             if not isinstance(data, list):
                 break
             commits.extend(data)
@@ -90,19 +94,18 @@ class GitHubClient:
         return commits
 
     def list_workflows(self, per_page: int = 100) -> List[Dict[str, Any]]:
-        status, data, _ = self._request("GET", "/actions/workflows", params={"per_page": per_page})
+        _, data, _ = self._request("GET", "/actions/workflows", params={"per_page": per_page})
         if isinstance(data, dict):
             return data.get("workflows", [])
         return []
 
     def list_workflow_runs(self, per_page: int = 100, **filters) -> List[Dict[str, Any]]:
-        # Filters may include 'created', 'actor', etc. The client filters by created_at in caller if needed.
         runs: List[Dict[str, Any]] = []
         page = 1
         while True:
             params = {"per_page": per_page, "page": page}
             params.update(filters)
-            status, data, _ = self._request("GET", "/actions/runs", params=params)
+            _, data, _ = self._request("GET", "/actions/runs", params=params)
             items = data.get("workflow_runs", []) if isinstance(data, dict) else []
             runs.extend(items)
             if len(items) < per_page:
@@ -114,7 +117,7 @@ class GitHubClient:
         jobs: List[Dict[str, Any]] = []
         page = 1
         while True:
-            status, data, _ = self._request("GET", f"/actions/runs/{run_id}/jobs", params={"per_page": per_page, "page": page})
+            _, data, _ = self._request("GET", f"/actions/runs/{run_id}/jobs", params={"per_page": per_page, "page": page})
             items = data.get("jobs", []) if isinstance(data, dict) else []
             jobs.extend(items)
             if len(items) < per_page:
@@ -126,7 +129,7 @@ class GitHubClient:
         deployments: List[Dict[str, Any]] = []
         page = 1
         while True:
-            status, data, _ = self._request("GET", "/deployments", params={"per_page": per_page, "page": page})
+            _, data, _ = self._request("GET", "/deployments", params={"per_page": per_page, "page": page})
             if not isinstance(data, list):
                 break
             deployments.extend(data)
@@ -136,5 +139,5 @@ class GitHubClient:
         return deployments
 
     def list_deployment_statuses(self, deployment_id: int) -> List[Dict[str, Any]]:
-        status, data, _ = self._request("GET", f"/deployments/{deployment_id}/statuses")
+        _, data, _ = self._request("GET", f"/deployments/{deployment_id}/statuses")
         return data if isinstance(data, list) else []
