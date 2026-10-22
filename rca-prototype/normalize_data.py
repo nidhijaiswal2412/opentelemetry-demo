@@ -65,6 +65,40 @@ def normalize_all(service: str, environment: str, org: str, repo: str, raw: Dict
                 return c.get("commit", {}).get("author", {}).get("name") or (c.get("author") or {}).get("login")
         return None
 
+
+    # --- Commit evidence ---
+    for commit in commits:
+        commit_info = commit.get("commit") or {}
+        author_info = commit_info.get("author") or {}
+        committer_info = commit_info.get("committer") or {}
+
+        out["evidence"].append({
+            "source": "github-commit",
+            "commitSha": commit.get("sha"),
+            "author": (
+                author_info.get("name")
+                or (commit.get("author") or {}).get("login")
+            ),
+            "committedAt": (
+                committer_info.get("date")
+                or author_info.get("date")
+            ),
+            "message": commit_info.get("message"),
+            "url": commit.get("html_url"),
+            "supported_by": [{
+                "api": "commits",
+                "record_id": commit.get("sha"),
+                "fields": [
+                    "sha",
+                    "commit.author",
+                    "commit.committer",
+                    "commit.message",
+                    "html_url"
+                ]
+            }]
+        })
+
+
     # --- Workflow run evidence (kept separate from deployment evidence) ---
     for run in runs:
         run_id = run.get("id")

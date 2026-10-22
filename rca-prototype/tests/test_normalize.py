@@ -1,7 +1,15 @@
 import pytest
+import sys
+from pathlib import Path
 
-from main import collect_related_services, filter_by_window
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from main import (
+    collect_related_services,
+    filter_by_window,
+    infer_service_from_paths,
+    map_evidence_to_services,
+)
 
 def test_filter_by_window():
     window_start = "2026-10-15T03:00:00Z"
@@ -29,3 +37,58 @@ def test_dependency_graph_for_checkout():
     assert "frontend" in related["upstream"]
     assert "payment" in related["downstream"]
     assert "flagd" in related["downstream"]
+
+def test_infer_checkout_service_from_path():
+    paths = ["src/checkout/CheckoutService.java"]
+    services = {"checkout", "frontend", "payment"}
+
+    assert infer_service_from_paths(paths, services) == "checkout"
+
+
+def test_infer_payment_service_from_path():
+    paths = ["payment/PaymentService.java"]
+    services = {"checkout", "frontend", "payment"}
+
+    assert infer_service_from_paths(paths, services) == "payment"
+
+
+def test_infer_frontend_service_from_path():
+    paths = ["frontend/src/app.ts"]
+    services = {"checkout", "frontend", "payment"}
+
+    assert infer_service_from_paths(paths, services) == "frontend"
+
+
+def test_map_commit_evidence_to_service():
+    class FakeGitHubClient:
+        def __init__(self):
+            self.calls = 0
+
+        def get_commit(self, sha):
+            self.calls += 1
+            return {
+                "files": [
+                    {"filename": "src/checkout/CheckoutService.java"}
+                ]
+            }
+
+    client = FakeGitHubClient()
+    evidence = [
+        {
+            "source": "github-commit",
+            "commitSha": "abc123",
+            "message": "Fix checkout error handling",
+        }
+    ]
+
+    result = map_evidence_to_services(
+        evidence,
+        ["checkout", "payment", "frontend"],
+        client,
+    )
+
+    assert len(result["checkout"]) == 1
+    assert result["checkout"][0]["commitSha"] == "abc123"
+    assert result["payment"] == []
+    assert result["frontend"] == []
+    assert client.calls == 1

@@ -85,6 +85,48 @@ def infer_service_from_paths(paths, known_services):
     return None
 
 
+def map_evidence_to_services(evidence, service_names, client):
+    """Map GitHub evidence to services using commit changed-file paths."""
+    mapped = {service: [] for service in service_names}
+    commit_cache = {}
+
+    for item in evidence:
+        if item.get("source") not in ("github-actions", "github-commit"):
+            continue
+
+        sha = item.get("commitSha")
+
+        if not sha:
+            if service_names:
+                mapped[service_names[0]].append(item)
+            continue
+
+        if sha not in commit_cache:
+            try:
+                commit_cache[sha] = client.get_commit(sha)
+            except GitHubAPIError:
+                commit_cache[sha] = None
+
+        commit = commit_cache[sha]
+        if not isinstance(commit, dict):
+            continue
+
+        files = commit.get("files", []) or []
+        filenames = [
+            file.get("filename")
+            for file in files
+            if isinstance(file, dict)
+        ]
+
+        service = infer_service_from_paths(filenames, set(service_names))
+
+        if service:
+            mapped[service].append(item)
+
+    return mapped
+
+
+
 def collect_related_services(service_name, graph, depth=2):
     def bfs(initial_service, relation_key):
         q = deque([(initial_service, 0)])
@@ -147,14 +189,51 @@ def run():
         summary["calls"].append({"endpoint": f"/repos/{org}/{repo}", "error": str(e)})
         raw["repository"] = None
 
-    # Commits in the window
+
+    # Commits within the incident window
     try:
-        commits = client.list_commits(since_iso=iso_from_dt(window_start))
-        summary["calls"].append({"endpoint": f"/commits?since={iso_from_dt(window_start)}", "count": len(commits)})
-        raw["commits"] = commits
+        all_commits = client.list_commits(
+            since_iso=iso_from_dt(window_start)
+        )
+
+        filtered_commits = []
+
+        for commit in all_commits:
+            commit_info = commit.get("commit") or {}
+            author_info = commit_info.get("author") or {}
+            committer_info = commit_info.get("committer") or {}
+
+            committed_at = (
+                committer_info.get("date")
+                or author_info.get("date")
+            )
+
+            if not committed_at:
+                continue
+
+            try:
+                commit_time = parse_iso(committed_at)
+            except (ValueError, TypeError):
+                continue
+
+            if window_start <= commit_time <= window_end:
+                filtered_commits.append(commit)
+
+        summary["calls"].append({
+            "endpoint": "/commits (filtered by incident window)",
+            "fetched_count": len(all_commits),
+            "count": len(filtered_commits)
+        })
+
+        raw["commits"] = filtered_commits
+
     except GitHubAPIError as e:
-        summary["calls"].append({"endpoint": "/commits", "error": str(e)})
+        summary["calls"].append({
+            "endpoint": "/commits",
+            "error": str(e)
+        })
         raw["commits"] = []
+
 
     # Workflows
     try:
@@ -231,7 +310,14 @@ def run():
             deployment_statuses[str(did)] = []
     raw["deployment_statuses"] = deployment_statuses
 
-    normalized = normalize_all(cfg["service"], cfg["environment"], org, repo, raw)
+    # Normalize collected GitHub data
+    normalized = normalize_all(
+        incident_service,
+        cfg["environment"],
+        org,
+        repo,
+        raw
+    )
 
     # Service dependency expansion for the incident service
     if dependency_graph:
@@ -239,39 +325,43 @@ def run():
     else:
         related = {"incident": incident_service, "upstream": [], "downstream": []}
 
-    # Map run evidence to service(s) conservatively using commit file paths
-    affected_services = []
-    for service_name in [incident_service] + related["upstream"] + related["downstream"]:
-        service_evidence = []
-        for ev in normalized.get("evidence", []):
-            if ev.get("source") == "github-actions":
-                sha = ev.get("commitSha")
-                if sha:
-                    try:
-                        commit = client.get_commit(sha)
-                    except GitHubAPIError:
-                        continue
-                    files = []
-                    if isinstance(commit, dict):
-                        files = commit.get("files", []) or []
-                    filenames = [f.get("filename") for f in files if isinstance(f, dict)]
-                    inferred = infer_service_from_paths(filenames, set(dependency_graph.keys()))
-                    if inferred and inferred == service_name:
-                        service_evidence.append(ev)
-                elif service_name == incident_service:
-                    # if no sha, still keep incident-service evidence as direct incident service
-                    service_evidence.append(ev)
 
-        # Include deployment evidence for the service if the normalized deployment evidence matches same commit or same ref?
-        # We will not fabricate a matching deployment for arbitrary services without explicit deployment data.
+    # Map evidence to affected services using commit file paths
+    service_names = (
+        [incident_service]
+        + related["upstream"]
+       + related["downstream"]
+    )
+
+    evidence_by_service = map_evidence_to_services(
+       normalized.get("evidence", []),
+       service_names,
+       client,
+    )
+
+
+    affected_services = []
+
+    for service_name in service_names:
+        if service_name == incident_service:
+            role = "incident"
+        elif service_name in related["upstream"]:
+            role = "upstream"
+        else:
+            role = "downstream"
+
         affected_services.append({
             "service": service_name,
-            "role": "incident" if service_name == incident_service else (
-                "upstream" if service_name in related["upstream"] else "downstream"
+            "role": role,
+            "evidence": evidence_by_service.get(service_name, []),
+            "notes": (
+                "GitHub evidence is mapped using commit changed-file paths. "
+                "Evidence without a commit SHA is assigned to the incident service. "
+                "Only matching service evidence is included."
             ),
-            "evidence": service_evidence,
-            "notes": "GitHub Actions evidence filtered to the incident window and service dependency graph. Deployment evidence is only included when GitHub Deployments API returned a deployment record."
         })
+
+
 
     outdir = base / "output"
     outdir.mkdir(exist_ok=True)
